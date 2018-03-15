@@ -1,191 +1,113 @@
+import random
 import numpy as np
-import pickle
-import os
-import download
-from dataset import one_hot_encoded
+from collections import defaultdict
+from keras.datasets import cifar10
 
-data_path = "data/CIFAR-10/"
-
-# URL for the data-set on the internet.
-data_url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-
-########################################################################
-# Various constants for the size of the images.
-# Use these constants in your own program.
-
-# Width and height of each image.
-img_size = 32
-
-# Number of channels in each image, 3 channels: Red, Green, Blue.
-num_channels = 3
-
-# Length of an image when flattened to a 1-dim array.
-img_size_flat = img_size * img_size * num_channels
-
-# Number of classes.
-num_classes = 10
-
-########################################################################
-# Various constants used to allocate arrays of the correct size.
-
-# Number of files for the training-set.
-_num_files_train = 5
-
-# Number of images for each batch-file in the training-set.
-_images_per_file = 10000
-
-# Total number of images in the training-set.
-# This is used to pre-allocate arrays for efficiency.
-_num_images_train = _num_files_train * _images_per_file
-
-########################################################################
-# Private functions for downloading, unpacking and loading data-files.
+class_num = 10
+image_size = 32
+img_channels = 3
 
 
-def _get_file_path(filename=""):
+def prepare_data(n):
+    (train_data, train_labels), (test_data, test_labels) = cifar10.load_data()
+    train_data, test_data = color_preprocessing(train_data, test_data) # pre-processing
+
+    criteria = n//10
+    input_dict, labelled_x, labelled_y, unlabelled_x, unlabelled_y = defaultdict(int), list(), list(), list(), list()
+
+    for image, label in zip(train_data,train_labels) :
+        if input_dict[int(label)] != criteria :
+            input_dict[int(label)] += 1
+            labelled_x.append(image)
+            labelled_y.append(label)
+
+        unlabelled_x.append(image)
+        unlabelled_y.append(label)
+
+
+    labelled_x = np.asarray(labelled_x)
+    labelled_y = np.asarray(labelled_y)
+    unlabelled_x = np.asarray(unlabelled_x)
+    unlabelled_y = np.asarray(unlabelled_y)
+
+    print("labelled data:", np.shape(labelled_x), np.shape(labelled_y))
+    print("unlabelled data :", np.shape(unlabelled_x), np.shape(unlabelled_y))
+    print("Test data :", np.shape(test_data), np.shape(test_labels))
+    print("======Load finished======")
+
+    print("======Shuffling data======")
+    indices = np.random.permutation(len(labelled_x))
+    labelled_x = labelled_x[indices]
+    labelled_y = labelled_y[indices]
+
+    indices = np.random.permutation(len(unlabelled_x))
+    unlabelled_x = unlabelled_x[indices]
+    unlabelled_y = unlabelled_y[indices]
+
+    print("======Prepare Finished======")
+
+
+    labelled_y_vec = np.zeros((len(labelled_y), 10), dtype=np.float)
+    for i, label in enumerate(labelled_y) :
+        labelled_y_vec[i, labelled_y[i]] = 1.0
+
+    unlabelled_y_vec = np.zeros((len(unlabelled_y), 10), dtype=np.float)
+    for i, label in enumerate(unlabelled_y) :
+        unlabelled_y_vec[i, unlabelled_y[i]] = 1.0
+
+    test_labels_vec = np.zeros((len(test_labels), 10), dtype=np.float)
+    for i, label in enumerate(test_labels) :
+        test_labels_vec[i, test_labels[i]] = 1.0
+
+
+    return labelled_x, labelled_y_vec, unlabelled_x, unlabelled_y_vec, test_data, test_labels_vec
+
+
+
+def _random_crop(batch, crop_shape, padding=None):
+    oshape = np.shape(batch[0])
+
+    if padding:
+        oshape = (oshape[0] + 2 * padding, oshape[1] + 2 * padding)
+    new_batch = []
+    npad = ((padding, padding), (padding, padding), (0, 0))
+    for i in range(len(batch)):
+        new_batch.append(batch[i])
+        if padding:
+            new_batch[i] = np.lib.pad(batch[i], pad_width=npad,
+                                      mode='constant', constant_values=0)
+        nh = random.randint(0, oshape[0] - crop_shape[0])
+        nw = random.randint(0, oshape[1] - crop_shape[1])
+        new_batch[i] = new_batch[i][nh:nh + crop_shape[0],
+                       nw:nw + crop_shape[1]]
+    return new_batch
+
+
+def _random_flip_leftright(batch):
+    for i in range(len(batch)):
+        if bool(random.getrandbits(1)):
+            batch[i] = np.fliplr(batch[i])
+    return batch
+
+
+def color_preprocessing(x_train, x_test):
     """
-    Return the full path of a data-file for the data-set.
-    If filename=="" then return the directory of the files.
+    x_train = x_train.astype('float32')
+    x_test = x_test.astype('float32')
+    x_train[:, :, :, 0] = (x_train[:, :, :, 0] - np.mean(x_train[:, :, :, 0])) / np.std(x_train[:, :, :, 0])
+    x_train[:, :, :, 1] = (x_train[:, :, :, 1] - np.mean(x_train[:, :, :, 1])) / np.std(x_train[:, :, :, 1])
+    x_train[:, :, :, 2] = (x_train[:, :, :, 2] - np.mean(x_train[:, :, :, 2])) / np.std(x_train[:, :, :, 2])
+
+    x_test[:, :, :, 0] = (x_test[:, :, :, 0] - np.mean(x_test[:, :, :, 0])) / np.std(x_test[:, :, :, 0])
+    x_test[:, :, :, 1] = (x_test[:, :, :, 1] - np.mean(x_test[:, :, :, 1])) / np.std(x_test[:, :, :, 1])
+    x_test[:, :, :, 2] = (x_test[:, :, :, 2] - np.mean(x_test[:, :, :, 2])) / np.std(x_test[:, :, :, 2])
     """
-
-    return os.path.join(data_path, "cifar-10-batches-py/", filename)
-
-
-def _unpickle(filename):
-    """
-    Unpickle the given file and return the data.
-    Note that the appropriate dir-name is prepended the filename.
-    """
-
-    # Create full path for the file.
-    file_path = _get_file_path(filename)
-
-    print("Loading data: " + file_path)
-
-    with open(file_path, mode='rb') as file:
-        # In Python 3.X it is important to set the encoding,
-        # otherwise an exception is raised here.
-        data = pickle.load(file, encoding='bytes')
-
-    return data
+    x_train = x_train/127.5 - 1
+    x_test = x_test/127.5 - 1
+    return x_train, x_test
 
 
-def _convert_images(raw):
-    """
-    Convert images from the CIFAR-10 format and
-    return a 4-dim array with shape: [image_number, height, width, channel]
-    where the pixels are floats between 0.0 and 1.0.
-    """
-
-    # Convert the raw images from the data-files to floating-points.
-    raw_float = np.array(raw, dtype=float) / 255.0
-
-    # Reshape the array to 4-dimensions.
-    images = raw_float.reshape([-1, num_channels, img_size, img_size])
-
-    # Reorder the indices of the array.
-    images = images.transpose([0, 2, 3, 1])
-
-    return images
-
-
-def _load_data(filename):
-    """
-    Load a pickled data-file from the CIFAR-10 data-set
-    and return the converted images (see above) and the class-number
-    for each image.
-    """
-
-    # Load the pickled data-file.
-    data = _unpickle(filename)
-
-    # Get the raw images.
-    raw_images = data[b'data']
-
-    # Get the class-numbers for each image. Convert to numpy-array.
-    cls = np.array(data[b'labels'])
-
-    # Convert the images.
-    images = _convert_images(raw_images)
-
-    return images, cls
-
-
-########################################################################
-# Public functions that you may call to download the data-set from
-# the internet and load the data into memory.
-
-
-def maybe_download_and_extract():
-    """
-    Download and extract the CIFAR-10 data-set if it doesn't already exist
-    in data_path (set this variable first to the desired path).
-    """
-
-    download.maybe_download_and_extract(url=data_url, download_dir=data_path)
-
-
-def load_class_names():
-    """
-    Load the names for the classes in the CIFAR-10 data-set.
-    Returns a list with the names. Example: names[3] is the name
-    associated with class-number 3.
-    """
-
-    # Load the class-names from the pickled file.
-    raw = _unpickle(filename="batches.meta")[b'label_names']
-
-    # Convert from binary strings.
-    names = [x.decode('utf-8') for x in raw]
-
-    return names
-
-
-def load_training_data():
-    """
-    Load all the training-data for the CIFAR-10 data-set.
-    The data-set is split into 5 data-files which are merged here.
-    Returns the images, class-numbers and one-hot encoded class-labels.
-    """
-
-    # Pre-allocate the arrays for the images and class-numbers for efficiency.
-    images = np.zeros(shape=[_num_images_train, img_size, img_size, num_channels], dtype=float)
-    cls = np.zeros(shape=[_num_images_train], dtype=int)
-
-    # Begin-index for the current batch.
-    begin = 0
-
-    # For each data-file.
-    for i in range(_num_files_train):
-        # Load the images and class-numbers from the data-file.
-        images_batch, cls_batch = _load_data(filename="data_batch_" + str(i + 1))
-
-        # Number of images in this batch.
-        num_images = len(images_batch)
-
-        # End-index for the current batch.
-        end = begin + num_images
-
-        # Store the images into the array.
-        images[begin:end, :] = images_batch
-
-        # Store the class-numbers into the array.
-        cls[begin:end] = cls_batch
-
-        # The begin-index for the next batch is the current end-index.
-        begin = end
-
-    return images, cls, one_hot_encoded(class_numbers=cls, num_classes=num_classes)
-
-
-def load_test_data():
-    """
-    Load all the test-data for the CIFAR-10 data-set.
-    Returns the images, class-numbers and one-hot encoded class-labels.
-    """
-
-    images, cls = _load_data(filename="test_batch")
-
-    return images, cls, one_hot_encoded(class_numbers=cls, num_classes=num_classes)
-
-########################################################################
+def data_augmentation(batch):
+    batch = _random_flip_leftright(batch)
+    batch = _random_crop(batch, [32, 32], 4)
+    return batch
